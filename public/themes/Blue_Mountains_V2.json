@@ -1,0 +1,23 @@
+{
+    "name": "Blue Mountains V2",
+    "blur_strength": 5,
+    "main_text_color": "rgba(232, 236, 238, 1)",
+    "italics_text_color": "rgba(103, 140, 162, 1)",
+    "quote_text_color": "rgba(92, 152, 189, 1)",
+    "blur_tint_color": "rgba(14, 30, 42, 0.48)",
+    "user_mes_blur_tint_color": "rgba(32, 44, 54, 0.38)",
+    "bot_mes_blur_tint_color": "rgba(34, 56, 70, 0.38)",
+    "shadow_color": "rgba(0, 0, 0, 0.5)",
+    "shadow_width": 0,
+    "font_scale": 1.05,
+    "fast_ui_mode": false,
+    "waifuMode": false,
+    "avatar_style": 1,
+    "chat_display": 1,
+    "noShadows": true,
+    "chat_width": 50,
+    "timer_enabled": true,
+    "timestamps_enabled": true,
+    "mesIDDisplay_enabled": "",
+    "hotswap_enabled": true
+}
