@@ -8,7 +8,6 @@ import { CoquiTtsProvider } from './coqui.js'
 import { SystemTtsProvider } from './system.js'
 import { NovelTtsProvider } from './novel.js'
 import { power_user } from '../../power-user.js'
-import { rvcVoiceConversion } from "../rvc/index.js"
 export { talkingAnimation };
 
 const UPDATE_INTERVAL = 1000
@@ -77,6 +76,8 @@ let ttsProviders = {
 let ttsProvider
 let ttsProviderName
 
+let ttsLastMessage = null;
+
 async function onNarrateOneMessage() {
     audioElement.src = '/sounds/silence.mp3';
     const context = getContext();
@@ -133,11 +134,27 @@ async function moduleWorker() {
     let diff = lastMessageNumber - currentMessageNumber
     let hashNew = getStringHash((chat.length && chat[chat.length - 1].mes) ?? '')
 
+    // if messages got deleted, diff will be < 0
+    if (diff < 0) {
+        // necessary actions will be taken by the onChatDeleted() handler
+        return
+    }
+
     if (diff == 0 && hashNew === lastMessageHash) {
         return
     }
 
-    const message = chat[chat.length - 1]
+    // clone message object, as things go haywire if message object is altered below (it's passed by reference)
+    const message = structuredClone(chat[chat.length - 1])
+
+    // if last message within current message, message got extended. only send diff to TTS.
+    if (ttsLastMessage !== null && message.mes.indexOf(ttsLastMessage) !== -1) {
+        let tmp = message.mes
+        message.mes = message.mes.replace(ttsLastMessage, '')
+        ttsLastMessage = tmp
+    } else {
+        ttsLastMessage = message.mes
+    }
 
     // We're currently swiping or streaming. Don't generate voice
     if (
@@ -415,8 +432,8 @@ async function tts(text, voiceId, char) {
     let response = await ttsProvider.generateTts(text, voiceId)
 
     // RVC injection
-    if (extension_settings.rvc.enabled)
-        response = await rvcVoiceConversion(response, char, text)
+    if (extension_settings.rvc.enabled && typeof window['rvcVoiceConversion'] === 'function')
+        response = await window['rvcVoiceConversion'](response, char, text)
 
     addAudioJob(response)
     completeTtsJob()
@@ -430,7 +447,7 @@ async function processTtsQueue() {
 
     console.debug('New message found, running TTS')
     currentTtsJob = ttsJobQueue.shift()
-    let text = extension_settings.tts.narrate_translated_only ? currentTtsJob?.extra?.display_text : currentTtsJob.mes
+    let text = extension_settings.tts.narrate_translated_only ? (currentTtsJob?.extra?.display_text || currentTtsJob.mes) : currentTtsJob.mes
     text = extension_settings.tts.narrate_dialogues_only
         ? text.replace(/\*[^\*]*?(\*|$)/g, '').trim() // remove asterisks content
         : text.replaceAll('*', '').trim() // remove just the asterisks
@@ -615,8 +632,8 @@ function onTtsProviderChange() {
 
 // Ensure that TTS provider settings are saved to extension settings.
 export function saveTtsProviderSettings() {
-    updateVoiceMap()
     extension_settings.tts[ttsProviderName] = ttsProvider.settings
+    updateVoiceMap()
     saveSettingsDebounced()
     console.info(`Saved settings ${ttsProviderName} ${JSON.stringify(ttsProvider.settings)}`)
 }
@@ -629,6 +646,26 @@ export function saveTtsProviderSettings() {
 async function onChatChanged() {
     await resetTtsPlayback()
     await initVoiceMap()
+    ttsLastMessage = null
+}
+
+async function onChatDeleted() {
+    const context = getContext()
+
+    // update internal references to new last message
+    lastChatId = context.chatId
+    currentMessageNumber = context.chat.length ? context.chat.length : 0
+
+    // compare against lastMessageHash. If it's the same, we did not delete the last chat item, so no need to reset tts queue
+    let messageHash = getStringHash((context.chat.length && context.chat[context.chat.length - 1].mes) ?? '')
+    if (messageHash === lastMessageHash) {
+        return
+    }
+    lastMessageHash = messageHash
+    ttsLastMessage = (context.chat.length && context.chat[context.chat.length - 1].mes) ?? '';
+
+    // stop any tts playback since message might not exist anymore
+    await resetTtsPlayback()
 }
 
 function getCharacters(){
@@ -696,6 +733,9 @@ function updateVoiceMap() {
         voiceMap = tempVoiceMap
         console.log(`Voicemap updated to ${JSON.stringify(voiceMap)}`)
     }
+    if (!extension_settings.tts[ttsProviderName].voiceMap) {
+        extension_settings.tts[ttsProviderName].voiceMap = {}
+    }
     Object.assign(extension_settings.tts[ttsProviderName].voiceMap, voiceMap)
     saveSettingsDebounced()
 }
@@ -749,10 +789,6 @@ class VoiceMapEntry {
  *
  */
 export async function initVoiceMap(){
-    // Clear existing voiceMap state
-    $('#tts_voicemap_block').empty()
-    voiceMapEntries = []
-
     // Gate initialization if not enabled or TTS Provider not ready. Prevents error popups.
     const enabled = $('#tts_enabled').is(':checked')
     if (!enabled){
@@ -769,6 +805,10 @@ export async function initVoiceMap(){
     }
 
     setTtsStatus("TTS Provider Loaded", true)
+
+    // Clear existing voiceMap state
+    $('#tts_voicemap_block').empty()
+    voiceMapEntries = []
 
     // Get characters in current chat
     const characters = getCharacters()
@@ -896,4 +936,5 @@ $(document).ready(function () {
     eventSource.on(event_types.MESSAGE_SWIPED, resetTtsPlayback);
     eventSource.on(event_types.CHAT_CHANGED, onChatChanged)
     eventSource.on(event_types.GROUP_UPDATED, onChatChanged)
+    eventSource.on(event_types.MESSAGE_DELETED, onChatDeleted);
 })
